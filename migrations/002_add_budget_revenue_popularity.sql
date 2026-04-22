@@ -1,0 +1,3 @@
+ALTER TABLE movies ADD COLUMN budget INTEGER;
+ALTER TABLE movies ADD COLUMN revenue INTEGER;
+ALTER TABLE movies ADD COLUMN popularity REAL;

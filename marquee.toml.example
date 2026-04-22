@@ -1,0 +1,21 @@
+[scan]
+movie_dir = "/tmp/movies"
+interval_hours = 6
+
+[tmdb]
+api_key = "your-tmdb-api-key"
+language = "zh-CN"
+auto_confirm_threshold = 0.85
+# proxy = "http://127.0.0.1:6152"    # 可选，墙内通常需要
+
+[llm]
+base_url = "http://localhost:11434/v1"
+api_key = ""
+model = "qwen2.5"
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[database]
+path = "./data/marquee.db"
