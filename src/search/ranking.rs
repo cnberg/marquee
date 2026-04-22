@@ -48,7 +48,9 @@ pub fn coarse_rank(
         .map(|m| m.movie_id)
         .collect();
 
-    // Step 1: 约束过滤（主要过滤语义召回的结果，结构化召回已满足约束）
+    // Step 1: 硬约束过滤。结构化召回 SQL 已经按 constraints 过滤过，但语义/协同
+    // 召回的结果是绕过 constraints 进来的，必须在这里再过一遍，否则像
+    // "周星驰的电影" 这种 cast 硬约束会被语义召回的"奇幻动画"冲垮。
     candidates.retain(|c| passes_constraints(c, &intent.constraints, &intent.exclusions));
 
     // Apply watched_policy
@@ -146,6 +148,79 @@ fn passes_constraints(
         }
     }
 
+    // Decades: (year/10)*10 must be in the requested set
+    if !constraints.decades.is_empty() {
+        match c.year {
+            Some(year) => {
+                let decade = (year / 10) * 10;
+                if !constraints.decades.contains(&decade) {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+
+    // Languages
+    if !constraints.languages.is_empty() {
+        match c.language {
+            Some(ref lang) => {
+                if !constraints.languages.iter().any(|l| l == lang) {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+
+    // Countries
+    if !constraints.countries.is_empty() {
+        match c.country {
+            Some(ref country) => {
+                if !constraints.countries.iter().any(|cc| cc == country) {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+
+    // Genres: at least one of the candidate's genres must match (mirrors structured_recall's
+    // EXISTS json_each WHERE value IN (...) semantics)
+    if !constraints.genres.is_empty() {
+        if !json_array_intersects(c.genres.as_deref(), &constraints.genres) {
+            return false;
+        }
+    }
+
+    // Directors: exact match against c.director (matches structured_recall's IN clause)
+    if !constraints.directors.is_empty() {
+        match c.director {
+            Some(ref dir) => {
+                if !constraints.directors.iter().any(|d| d == dir) {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+
+    // Cast: at least one of the requested cast members must appear in the candidate's cast.
+    // This is the case that made "周星驰的电影" leak unrelated semantic neighbours
+    // before the fix.
+    if !constraints.cast.is_empty() {
+        if !json_array_intersects(c.cast.as_deref(), &constraints.cast) {
+            return false;
+        }
+    }
+
+    // Keywords (constraints, not exclusions)
+    if !constraints.keywords.is_empty() {
+        if !json_array_intersects(c.keywords.as_deref(), &constraints.keywords) {
+            return false;
+        }
+    }
+
     // Min rating
     if let Some(min_r) = constraints.min_rating {
         if c.tmdb_rating.unwrap_or(0.0) < min_r {
@@ -174,6 +249,32 @@ fn passes_constraints(
         }
     }
 
+    // Budget tier (same thresholds as structured_recall)
+    if let Some(ref tier) = constraints.budget_tier {
+        match c.budget {
+            Some(b) => {
+                let actual = if b > 50_000_000 {
+                    "high"
+                } else if b >= 5_000_000 {
+                    "medium"
+                } else if b > 0 {
+                    "low"
+                } else {
+                    return false; // unknown budget can't satisfy a tier requirement
+                };
+                if actual != tier {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+
+    // popularity_tier intentionally not enforced here: structured_recall uses a
+    // global percentile (top/bottom third) that we cannot recompute per-candidate
+    // without the full distribution. The LLM almost always puts popularity_tier
+    // into preferences (soft) anyway, so this is a deliberate gap, not an oversight.
+
     // Exclusions: genres
     if !exclusions.genres.is_empty() {
         if let Some(ref genres_json) = c.genres {
@@ -197,6 +298,15 @@ fn passes_constraints(
     }
 
     true
+}
+
+/// JSON-array column ∩ wanted: true iff at least one element of `wanted` appears
+/// in the JSON array. Returns false when the column is NULL or unparseable, so
+/// candidates without the data cannot satisfy a hard requirement.
+fn json_array_intersects(json_col: Option<&str>, wanted: &[String]) -> bool {
+    let Some(s) = json_col else { return false };
+    let Ok(values) = serde_json::from_str::<Vec<String>>(s) else { return false };
+    values.iter().any(|v| wanted.iter().any(|w| w == v))
 }
 
 /// 计算候选与 preferences 的匹配度加分（0.0~0.15）。
@@ -379,6 +489,134 @@ mod tests {
         coarse_rank(&mut cands, &intent, 10, &[]);
         assert_eq!(cands.len(), 1);
         assert_eq!(cands[0].movie_id, 2);
+    }
+
+    // Regression: "周星驰的经典电影，一定要周星驰的" previously leaked unrelated
+    // semantic neighbours (e.g. 心灵奇旅) because passes_constraints ignored
+    // constraints.cast entirely. Only candidates whose cast includes one of the
+    // requested names may survive.
+    #[test]
+    fn cast_constraint_drops_candidates_without_match() {
+        let mut stephen = candidate(1, "大话西游", Some(1995));
+        stephen.cast = Some("[\"周星驰\",\"吴孟达\"]".into());
+        let mut pixar = candidate(2, "心灵奇旅", Some(2020));
+        pixar.cast = Some("[\"Jamie Foxx\",\"Tina Fey\"]".into());
+        let mut no_cast_data = candidate(3, "Unknown", Some(2010));
+        no_cast_data.cast = None;
+        let mut cands = vec![stephen, pixar, no_cast_data];
+        let mut intent = basic_intent();
+        intent.constraints.cast = vec!["周星驰".into()];
+        coarse_rank(&mut cands, &intent, 10, &[]);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].movie_id, 1);
+    }
+
+    #[test]
+    fn director_constraint_requires_exact_match() {
+        let mut a = candidate(1, "A", Some(2010));
+        a.director = Some("王家卫".into());
+        let mut b = candidate(2, "B", Some(2010));
+        b.director = Some("张艺谋".into());
+        let mut cands = vec![a, b];
+        let mut intent = basic_intent();
+        intent.constraints.directors = vec!["王家卫".into()];
+        coarse_rank(&mut cands, &intent, 10, &[]);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].movie_id, 1);
+    }
+
+    #[test]
+    fn genre_constraint_requires_intersection() {
+        let mut sci_fi = candidate(1, "SciFi", Some(2010));
+        sci_fi.genres = Some("[\"科幻\",\"动作\"]".into());
+        let mut romance = candidate(2, "Romance", Some(2010));
+        romance.genres = Some("[\"爱情\"]".into());
+        let mut cands = vec![sci_fi, romance];
+        let mut intent = basic_intent();
+        intent.constraints.genres = vec!["科幻".into()];
+        coarse_rank(&mut cands, &intent, 10, &[]);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].movie_id, 1);
+    }
+
+    #[test]
+    fn decade_constraint_filters_wrong_era() {
+        let nineties = candidate(1, "90s", Some(1995));
+        let twenties = candidate(2, "20s", Some(2022));
+        let mut cands = vec![nineties, twenties];
+        let mut intent = basic_intent();
+        intent.constraints.decades = vec![1990];
+        coarse_rank(&mut cands, &intent, 10, &[]);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].movie_id, 1);
+    }
+
+    #[test]
+    fn language_constraint_filters() {
+        let mut zh = candidate(1, "Z", Some(2010));
+        zh.language = Some("zh".into());
+        let mut en = candidate(2, "E", Some(2010));
+        en.language = Some("en".into());
+        let mut cands = vec![zh, en];
+        let mut intent = basic_intent();
+        intent.constraints.languages = vec!["zh".into()];
+        coarse_rank(&mut cands, &intent, 10, &[]);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].movie_id, 1);
+    }
+
+    #[test]
+    fn country_constraint_filters() {
+        let mut cn = candidate(1, "C", Some(2010));
+        cn.country = Some("CN".into());
+        let mut us = candidate(2, "U", Some(2010));
+        us.country = Some("US".into());
+        let mut cands = vec![cn, us];
+        let mut intent = basic_intent();
+        intent.constraints.countries = vec!["CN".into()];
+        coarse_rank(&mut cands, &intent, 10, &[]);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].movie_id, 1);
+    }
+
+    #[test]
+    fn budget_tier_constraint_filters() {
+        let mut low = candidate(1, "L", Some(2010));
+        low.budget = Some(1_000_000);
+        let mut high = candidate(2, "H", Some(2010));
+        high.budget = Some(200_000_000);
+        let mut cands = vec![low, high];
+        let mut intent = basic_intent();
+        intent.constraints.budget_tier = Some("high".into());
+        coarse_rank(&mut cands, &intent, 10, &[]);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].movie_id, 2);
+    }
+
+    #[test]
+    fn keyword_constraint_requires_intersection() {
+        let mut a = candidate(1, "A", Some(2010));
+        a.keywords = Some("[\"kung fu\",\"comedy\"]".into());
+        let mut b = candidate(2, "B", Some(2010));
+        b.keywords = Some("[\"noir\"]".into());
+        let mut cands = vec![a, b];
+        let mut intent = basic_intent();
+        intent.constraints.keywords = vec!["kung fu".into()];
+        coarse_rank(&mut cands, &intent, 10, &[]);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].movie_id, 1);
+    }
+
+    #[test]
+    fn candidate_missing_data_cannot_satisfy_hard_constraint() {
+        // cast column is NULL → can't prove it includes 周星驰 → drop.
+        let mut no_cast = candidate(1, "Unknown", Some(2010));
+        no_cast.cast = None;
+        let mut cands = vec![no_cast];
+        let mut intent = basic_intent();
+        intent.constraints.cast = vec!["周星驰".into()];
+        coarse_rank(&mut cands, &intent, 10, &[]);
+        assert!(cands.is_empty());
     }
 
     #[test]
