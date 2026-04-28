@@ -3,6 +3,11 @@
 All notable changes to Marquee are documented in this file.
 Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [v0.2.1] - 2026-04-28
+
+### 📝 文档
+- README 截图整合：用更能体现语义召回能力的搜索历史详情页（"主角骑自行车的电影" → 自行车主题电影）替代原有静态推荐结果截图，去掉重复展示的搜索历史截图
+
 ## [v0.2.0] - 2026-04-28
 
 ### ✨ 新功能
