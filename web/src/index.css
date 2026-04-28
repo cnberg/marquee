@@ -1,51 +1,63 @@
 @import "tailwindcss";
 @plugin "tailwindcss-animate";
 
+/*
+ * Marquee 色彩方案
+ * ────────────────
+ * Primary:     #9ac5e5  (206 58% 75%)  — 柔蓝，主色调
+ * Secondary:   #4fb19d  (168 39% 50%)  — 青绿，次要操作
+ * Accent:      #edce7a  (44 77% 70%)   — 暖金，强调高亮
+ * Destructive: #c98c9a  (346 33% 67%)  — 暗玫红，错误/删除
+ * Muted:       #e5c6c3  (5 30% 83%)    — 浅暖粉，低对比度底色/边框
+ *
+ * 详见 docs/modules/web-ui.md「色彩规范」章节。
+ */
+
 @layer base {
   :root {
     color-scheme: light;
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --background: 30 20% 98%;
+    --foreground: 210 15% 12%;
+    --card: 30 15% 97%;
+    --card-foreground: 210 15% 12%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
+    --popover-foreground: 210 15% 12%;
+    --primary: 206 58% 40%;
     --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
+    --secondary: 168 39% 42%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 5 25% 93%;
+    --muted-foreground: 210 8% 45%;
+    --accent: 44 77% 55%;
+    --accent-foreground: 44 60% 16%;
+    --destructive: 346 40% 50%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    --border: 5 18% 88%;
+    --input: 5 18% 88%;
+    --ring: 206 58% 50%;
     --radius: 0.5rem;
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --background: 220 15% 8%;
+    --foreground: 30 15% 92%;
+    --card: 220 12% 11%;
+    --card-foreground: 30 15% 92%;
+    --popover: 220 12% 11%;
+    --popover-foreground: 30 15% 92%;
+    --primary: 206 58% 75%;
+    --primary-foreground: 210 20% 10%;
+    --secondary: 168 39% 50%;
+    --secondary-foreground: 168 20% 10%;
+    --muted: 5 10% 18%;
+    --muted-foreground: 5 15% 60%;
+    --accent: 44 77% 70%;
+    --accent-foreground: 44 60% 10%;
+    --destructive: 346 33% 55%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --border: 5 8% 20%;
+    --input: 5 8% 20%;
+    --ring: 206 58% 75%;
   }
 
   body {
@@ -57,6 +69,21 @@
 
   html.dark {
     color-scheme: dark;
+  }
+}
+
+/*
+ * MovieGrid 短装饰位的移动端尾部修剪
+ * ───────────────────────────────────
+ * 移动端是 2 列网格。当奇数项数（5/7/9...）时最后一行只有 1 个，
+ * 视觉上"两行半"难看。开启 .mobile-trim-odd-tail 后，把"最后一个
+ * 且位于奇数位且不是唯一一个"的卡隐藏掉，视觉变干净。
+ * 仅装饰位（首页今日精选 / 最新入库 / 库外热门等）使用，
+ * 翻页 / 用户数据 / LLM 精选结果一律不开启——细则见 docs/modules/web-ui.md。
+ */
+@media (max-width: 639px) {
+  .mobile-trim-odd-tail > :nth-child(odd):last-child:not(:first-child) {
+    display: none;
   }
 }
 

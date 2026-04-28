@@ -7,6 +7,7 @@ Countries/regions: {{countries}}
 Decades: {{decades}}
 Directors: {{directors}}
 Frequent cast: {{cast}}
+Frequent keywords (English, TMDB canonical vocabulary): {{keywords}}
 Rating distribution: {{ratings}}
 Budget distribution: {{budgets}}
 {{user_history}}
@@ -14,11 +15,15 @@ Budget distribution: {{budgets}}
 Based on the user's query, emit the following JSON structure. Rules:
 
 1. `constraints` are hard filters. Fill them in only if the user **explicitly states** or **strongly implies** a constraint. For example, "classic old films" implies an early decade range (1950–1980), "Hong Kong films" implies `countries: ["HK"]`. But vague mood words like "warm" should NOT be turned into constraints.
+   - **Style / format / medium modifiers MUST go into hard constraints (not preferences)** — they usually mean "must be". Which field depends on what they actually are:
+     - If the term is itself a TMDB **genre** ("animation" / "documentary" / "comedy" / "drama" etc., look it up in the "Genre distribution" list above) → put it in `constraints.genres`
+     - If it's not a genre but a stylistic / format / medium descriptor ("black and white", "silent film", "IMAX") → put it in `constraints.keywords`
 2. `preferences` are soft hints used for ranking only, never for filtering. **Use preferences aggressively** — most queries should have preferences. Rules:
-   - If the user mentions a vibe, mood, or style, put related genres/keywords/decades in preferences.
+   - If the user mentions a vibe, mood, or secondary style, put related genres/keywords/decades in preferences.
    - If a genre/decade is already in `constraints`, you can still put **related expansion genres** in preferences. Example: constraints has "sci-fi", preferences can add ["adventure", "action"].
    - If the user doesn't explicitly name a director/country but implies one (e.g. "Japanese anime" implies JP), put it in preferences rather than constraints.
    - `keywords` is especially important: infer 3–5 relevant English TMDB keywords from the user's description and put them in `preferences.keywords`.
+   - **Keywords must align to the library's actual vocabulary**: prefer values from the "Frequent keywords" list above. If none match exactly, pick the closest one semantically — never coin new variants (e.g. use `"black and white"`, not `"monochrome"` or `"b&w"`). This applies to `constraints.keywords`, `preferences.keywords`, and `exclusions.keywords` alike.
 3. `exclusions` are things the user explicitly rules out (e.g. "no horror").
 4. `search_intents` are strings used for semantic embedding similarity against each movie's "title + overview + genre tags + keywords". Write them as **concrete plot-synopsis-like sentences** with scenes, character types, plot beats, and emotional tone. Do NOT write abstract genre labels. Output 1–3 items, each 30–100 words.
 5. `sort_rules` define ranking priority; the sum of `weight` must equal 1.0. `order` is `"asc"` or `"desc"`. For "old films", `year` should be `"asc"`; for "highly rated", `rating` should be `"desc"`.
@@ -43,7 +48,7 @@ Value domains (strict):
 - `decades`: integers, e.g. 1990, 2000, 2010.
 - `directors`: names that MUST be chosen from the "Directors" list above (verbatim).
 - `cast`: names that MUST be chosen from the "Frequent cast" list above (verbatim).
-- `keywords`: English TMDB keywords, e.g. `"time travel"`, `"dystopia"`, `"based on novel or book"`.
+- `keywords`: English TMDB keywords — prefer values from the "Frequent keywords" list above, e.g. `"black and white"`, `"based on novel or book"`, `"dystopia"`.
 - `min_rating` / `max_rating`: 0.0–10.0.
 - `runtime_range.min` / `.max`: integer minutes.
 - `budget_tier`: `"low"` (<$5M) / `"medium"` ($5M–$50M) / `"high"` (>$50M).
@@ -63,6 +68,9 @@ User: "Something nostalgic, a classic romance from long ago"
 
 User: "What's good for a rainy day alone at home"
 {"preferences":{"keywords":["loneliness","rain","melancholy","introspection","solitude"],"popularity_tier":"niche"},"search_intents":["A solitary figure spends a long, rainy night in a small apartment, revisiting memories of lost connections","Quiet small-town life where the protagonist finds stillness in a bookstore, a café, or a library","A drifting writer or artist travels alone and shares brief, piercing conversations with strangers along the way"],"sort_rules":[{"field":"relevance","weight":1.0,"order":"desc"}],"query_type":"semantic"}
+
+User: "DiCaprio's black-and-white films"
+{"constraints":{"cast":["Leonardo DiCaprio"],"keywords":["black and white"]},"preferences":{"genres":["Drama"],"keywords":["old hollywood","drama"]},"search_intents":["An actor delivers a nuanced performance in a black-and-white drama, high-contrast lighting shaping every frame","A period biopic shot in monochrome, the actor anchoring a story of ambition and loss","A character-driven drama in classic black-and-white photography, focused on human fate and contradictions"],"sort_rules":[{"field":"rating","weight":0.6,"order":"desc"},{"field":"year","weight":0.4,"order":"desc"}],"query_type":"mixed"}
 
 User: "Recommend some niche 8+ sci-fi, no horror"
 {"constraints":{"min_rating":8.0},"preferences":{"popularity_tier":"niche","keywords":["dystopia","time travel","artificial intelligence","space exploration","philosophical"]},"exclusions":{"keywords":["horror"]},"search_intents":["In a dystopian future, an ordinary worker uncovers the hidden machinery of the system and is forced into quiet rebellion","Astronauts on a deep-space mission confront an unexplained phenomenon and wrestle with isolation and existential doubt","A scientist invents a time machine or an AI and is trapped by the ethical consequences they failed to foresee"],"sort_rules":[{"field":"rating","weight":0.6,"order":"desc"},{"field":"relevance","weight":0.4,"order":"desc"}],"query_type":"mixed","watched_policy":"exclude"}

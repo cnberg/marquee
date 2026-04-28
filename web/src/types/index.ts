@@ -29,6 +29,11 @@ export interface Movie {
   tagline_en?: string
   genres_zh?: string
   genres_en?: string
+  director_info_en?: string  // JSON string (en-US TMDB crew)
+  cast_en?: string            // JSON string (en-US TMDB cast)
+  keywords_en?: string        // JSON string (en-US TMDB keywords)
+  collection_en?: string      // JSON string (en-US TMDB collection)
+  production_companies_en?: string  // JSON string (en-US TMDB companies)
   // extended TMDB fields
   imdb_id?: string
   backdrop_path?: string
@@ -51,6 +56,8 @@ export interface MovieCredit {
   department?: string
   order?: number
   profile_path?: string
+  person_name_en?: string
+  role_en?: string
 }
 
 export interface MovieImage {
@@ -163,14 +170,21 @@ export interface MovieDetail extends Movie {
   images?: MovieImage[]
   videos?: MovieVideo[]
   reviews?: MovieReview[]
-  similar?: RelatedMovie[]
-  recommendations?: RelatedMovie[]
+  similar?: Movie[]
+  recommendations?: Movie[]
   watch_providers?: MovieWatchProvider[]
   release_dates?: MovieReleaseDate[]
   external_ids?: MovieExternalId
   alternative_titles?: MovieAlternativeTitle[]
   translations?: MovieTranslation[]
   lists?: MovieList[]
+  download_status?: {
+    state: string
+    progress: number
+    dlspeed: number
+    size: number | null
+    media_type: string
+  }
 }
 
 export interface Person {
@@ -241,6 +255,7 @@ export interface RecommendItem {
   movie: Movie
   reason?: string | null
   in_library?: boolean
+  downloading?: boolean
 }
 
 export interface RecommendResult {
@@ -251,7 +266,13 @@ export interface AdminOverviewData {
   dir_total: number
   dir_status: [string, number][]
   match_status: [string, number][]
+  movies_by_source: [string, number][]
   tasks: Record<string, Record<string, number>>
+  year_buckets: [string, number][]
+  country_top: [string, number][]
+  genre_top: [string, number][]
+  rating_histogram: [string, number][]
+  mark_counts: Record<string, number>
 }
 
 export interface LlmLogEntry {
@@ -281,9 +302,224 @@ export interface SearchHistoryDetail {
   sse_events: string
   result_count: number
   created_at: string
+  share_token?: string | null
 }
 
 export interface ParsedSseEvent {
   event: 'status' | 'thinking' | 'result' | string
   data: any
+}
+
+export interface BenchmarkQuery {
+  id: number
+  query: string
+  note: string | null
+  expected_ids: number[]
+  not_expected_ids: number[]
+  created_at: string
+  updated_at: string
+  source_history_id: number | null
+}
+
+export interface BenchmarkQueryRunResult {
+  run_id: number
+  run_started_at: string
+  run_finished_at: string | null
+  run_status: string
+  run_note: string | null
+  run_is_baseline: boolean
+  hit: boolean | null
+  coverage_ratio: number | null
+  elapsed_ms: number | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  top_movies: any[]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  intent: any | null
+  error: string | null
+  not_expected_ids: number[]
+}
+
+export interface BenchmarkRun {
+  id: number
+  started_at: string
+  finished_at: string | null
+  status: 'running' | 'done' | 'error' | 'canceled' | string
+  total: number
+  passed: number
+  failed: number
+  note: string | null
+  is_baseline: boolean
+  cancel_requested: boolean
+}
+
+export interface BenchmarkTopMovie {
+  tmdb_id: number
+  title: string
+  in_library?: boolean
+}
+
+export interface BenchmarkResultView {
+  id: number
+  query_id: number
+  query_text: string
+  expected_ids: number[]
+  not_expected_ids: number[]
+  top_movies: BenchmarkTopMovie[]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  intent_json: any | null
+  hit: boolean | null
+  coverage_ratio: number | null
+  elapsed_ms: number | null
+  error: string | null
+}
+
+export interface BenchmarkAggregateMovie {
+  tmdb_id: number
+  movie_id: number | null
+  title: string | null
+  title_zh: string | null
+  title_en: string | null
+  poster_url: string | null
+  year: number | null
+  appearance_count: number
+  best_rank: number | null
+  avg_rank: number | null
+  latest_at: string | null
+  is_expected: boolean
+  is_not_expected: boolean
+}
+
+export interface BenchmarkAggregateResponse {
+  query: BenchmarkQuery
+  history_count: number
+  total_movies: number
+  page: number
+  page_size: number
+  movies: BenchmarkAggregateMovie[]
+}
+
+export interface BenchmarkMovieAppearance {
+  history_id: number
+  rank: number
+  created_at: string
+}
+
+export interface BenchmarkMovieAppearancesResponse {
+  tmdb_id: number
+  appearances: BenchmarkMovieAppearance[]
+}
+
+export interface BenchmarkRunDetail {
+  run: BenchmarkRun
+  results: BenchmarkResultView[]
+}
+
+export interface BenchmarkCompareItem {
+  query_id: number
+  query_text: string
+  expected_ids: number[]
+  baseline: BenchmarkResultView | null
+  current: BenchmarkResultView | null
+  added_movies: BenchmarkTopMovie[]
+  removed_movies: BenchmarkTopMovie[]
+  intent_changed: boolean
+  hit_delta: number | null
+}
+
+export interface BenchmarkCompareResponse {
+  baseline_run: BenchmarkRun
+  current_run: BenchmarkRun
+  items: BenchmarkCompareItem[]
+}
+
+export interface LocateCandidate {
+  dir_id: number
+  dir_name: string
+  dir_path: string
+  status: string | null
+  score: number
+  parsed_title: string
+  parsed_year: number | null
+}
+
+export interface LocateResponse {
+  candidates: LocateCandidate[]
+}
+
+export interface AppConfig {
+  scan: {
+    enabled: boolean
+    movie_dirs: string[]
+    interval_hours: number
+    worker_poll_secs: number
+    refresh_interval_hours: number
+    refresh_batch_size: number
+    ssh_key_path?: string
+  }
+  tmdb: {
+    api_key: string
+    language: string
+    auto_confirm_threshold: number
+    proxy: string | null
+  }
+  llm: {
+    backend: string
+    base_url: string
+    api_key: string
+    model: string
+  }
+  server: {
+    host: string
+    port: number
+  }
+  database: {
+    path: string
+  }
+  auth: {
+    jwt_secret: string
+    jwt_expiry_days: number
+  }
+  qbittorrent: {
+    enabled: boolean
+    base_url: string
+    username: string
+    password: string
+    save_path: string
+    poll_interval_hours: number
+  }
+}
+
+export interface MultiVersionMovieSummary {
+  id: number
+  title: string
+  title_zh: string | null
+  year: number | null
+  poster_url: string | null
+}
+
+export interface MultiVersionDir {
+  dir_id: number
+  dir_name: string
+  dir_path: string
+  source: string | null
+  match_status: string
+  match_confidence: number | null
+  torrent_name: string | null
+  media_type: string | null
+  size_bytes: number | null
+  torrent_state: string | null
+  torrent_progress: number | null
+}
+
+export interface MultiVersionMovie {
+  movie: MultiVersionMovieSummary
+  version_count: number
+  dirs: MultiVersionDir[]
+}
+
+export interface MultiVersionResponse {
+  items: MultiVersionMovie[]
+  total: number
+  limit: number
+  offset: number
 }

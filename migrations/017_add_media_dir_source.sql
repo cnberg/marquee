@@ -1,0 +1,1 @@
+ALTER TABLE media_dirs ADD COLUMN source TEXT NOT NULL DEFAULT 'local';

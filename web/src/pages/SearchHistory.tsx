@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { RotateCcw, Trash2 } from 'lucide-react'
 import { api } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { useLocale } from '../i18n/LocaleContext'
 import type { SearchHistoryItem } from '../types'
 import { Button } from '../components/ui/button'
-import { Card } from '../components/ui/card'
 import { Alert, AlertDescription } from '../components/ui/alert'
 
 export default function SearchHistory() {
@@ -65,6 +65,12 @@ export default function SearchHistory() {
     }
   }
 
+  const handleRerun = (prompt: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    navigate(`/?q=${encodeURIComponent(prompt)}`)
+  }
+
   const handleClearAll = async () => {
     if (!window.confirm(t('history_clear_confirm'))) return
     try {
@@ -107,10 +113,10 @@ export default function SearchHistory() {
         </div>
       )}
 
-      <div className="space-y-3">
+      <div className="divide-y divide-border">
         {items.map((item) => (
-          <Card key={item.id} className="transition hover:-translate-y-0.5 hover:shadow-lg">
-            <Link to={`/history/${item.id}`} className="flex items-start justify-between gap-3 p-4">
+          <div key={item.id} className="transition-colors hover:bg-muted/30">
+            <Link to={`/history/${item.id}`} className="flex items-start justify-between gap-3 px-2 py-4">
               <div className="space-y-2">
                 <div className="text-base font-semibold leading-snug line-clamp-2">{item.prompt}</div>
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
@@ -119,17 +125,28 @@ export default function SearchHistory() {
                   <span>{t('history_result_count', { n: String(item.result_count) })}</span>
                 </div>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={(e) => handleDelete(item.id, e)}
-                aria-label={t('history_delete')}
-              >
-                ×
-              </Button>
+              <div className="flex shrink-0 gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => handleRerun(item.prompt, e)}
+                >
+                  <RotateCcw className="mr-1 h-4 w-4" />
+                  {t('history_rerun')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => handleDelete(item.id, e)}
+                >
+                  <Trash2 className="mr-1 h-4 w-4" />
+                  {t('history_delete')}
+                </Button>
+              </div>
             </Link>
-          </Card>
+          </div>
         ))}
       </div>
 

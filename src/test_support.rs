@@ -24,8 +24,13 @@ use crate::llm::LlmClient;
 pub fn test_config() -> Config {
     Config {
         scan: ScanConfig {
-            movie_dir: "/tmp/nonexistent-marquee-test".into(),
+            enabled: true,
+            movie_dirs: vec!["/tmp/nonexistent-marquee-test".into()],
             interval_hours: 6,
+            worker_poll_secs: 5,
+            refresh_interval_hours: 1,
+            refresh_batch_size: 60,
+            ssh_key_path: None,
         },
         tmdb: TmdbConfig {
             api_key: "test-key".into(),
@@ -34,6 +39,7 @@ pub fn test_config() -> Config {
             proxy: None,
         },
         llm: LlmConfig {
+            backend: Default::default(),
             base_url: "http://localhost".into(),
             api_key: String::new(),
             model: "stub".into(),
@@ -49,6 +55,7 @@ pub fn test_config() -> Config {
             jwt_secret: "test-secret-42".into(),
             jwt_expiry_days: 7,
         },
+        qbittorrent: Default::default(),
     }
 }
 
@@ -58,10 +65,14 @@ pub fn test_state(pool: SqlitePool) -> AppState {
     let llm = LlmClient::new(&config.llm);
     AppState {
         pool,
-        config,
+        config: std::sync::Arc::new(tokio::sync::RwLock::new(config)),
         llm,
         embedding_model: None,
         embedding_store: None,
+        most_related_cache: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+        most_related_reasons_pending: std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashSet::new(),
+        )),
     }
 }
 

@@ -4,6 +4,7 @@ import { useLocale } from '../i18n/LocaleContext'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
 
 interface LlmLogEntry {
   filename: string
@@ -36,6 +37,22 @@ export default function AdminErrors() {
   const [selectedLog, setSelectedLog] = useState<string | null>(null)
   const [logContent, setLogContent] = useState<string>('')
   const [logContentLoading, setLogContentLoading] = useState(false)
+
+  const [rematching, setRematching] = useState(false)
+  const [rematchMsg, setRematchMsg] = useState<string | null>(null)
+
+  const handleRematch = async () => {
+    setRematching(true)
+    setRematchMsg(null)
+    try {
+      const res = await api.rematchPending()
+      setRematchMsg(t('errors_rematch_done').replace('{n}', String(res.rematched)))
+    } catch (err) {
+      setRematchMsg(err instanceof Error ? err.message : 'rematch failed')
+    } finally {
+      setRematching(false)
+    }
+  }
 
   const loadTasks = async () => {
     setTasksLoading(true)
@@ -90,6 +107,22 @@ export default function AdminErrors() {
   return (
     <div className="space-y-4">
       <h2 className="text-2xl font-semibold">{t('errors_title')}</h2>
+      <Card className="space-y-2 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="font-medium">{t('errors_rematch_heading')}</div>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {t('errors_rematch_help')}
+            </p>
+          </div>
+          <Button onClick={handleRematch} disabled={rematching}>
+            {rematching ? t('errors_rematch_running') : t('errors_rematch_button')}
+          </Button>
+        </div>
+        {rematchMsg && (
+          <div className="text-sm text-muted-foreground">{rematchMsg}</div>
+        )}
+      </Card>
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
         <TabsList>
           <TabsTrigger value="tasks">

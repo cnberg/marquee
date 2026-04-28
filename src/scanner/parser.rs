@@ -98,7 +98,10 @@ const SOURCES: &[&str] = &[
     // Workprint
     "WORKPRINT", "WP",
     // Misc source tokens
-    "REMUX", "PROPER", "REPACK", "Rerip", "REAL",
+    // Note: "REAL" intentionally omitted — too many legit titles contain
+    // "Real" (Real Steel, The Real Thing, Real Genius). The rare scene-tag
+    // collision is acceptable; destroying real titles is not.
+    "REMUX", "PROPER", "REPACK", "Rerip",
     // Digital master
     "DM", "DigitalMaster",
     // VOD
@@ -182,8 +185,8 @@ const EDITIONS: &[&str] = &[
 
 /// Other noise tokens (quality markers, misc tags)
 const OTHER: &[&str] = &[
-    // Quality / fix
-    "PROPER", "REPACK", "Rerip", "REAL",
+    // Quality / fix (see SOURCES list — "REAL" deliberately excluded)
+    "PROPER", "REPACK", "Rerip",
     "Fix(?:ed)?", "Dirfix", "Nfofix", "Prooffix", "Sample-?Fix",
     "Audio-?Fix(?:ed)?", "Sync-?Fix(?:ed)?",
     // Rip markers
@@ -197,6 +200,8 @@ const OTHER: &[&str] = &[
     "Complete", "Bonus", "Extras?",
     "Trailer", "Sample", "Proof",
     "Documentary", "DOCU", "DOKU",
+    // Multi-disc / multi-part box-set markers
+    "Disc[\\s._-]?\\d+", "CD\\d+", "DVD\\d+", "Part[\\s._-]?\\d+",
     // Release markers
     "Internal", "Classic", "Retail",
     "Obfuscated", "Scrambled",
@@ -303,7 +308,17 @@ pub fn parse_directory_name(name: &str) -> ParsedName {
         if let Some(pos) = find_year_occurrence(&working, &year_str) {
             let before_year = working[..pos].trim_matches(TRIM_CHARS);
             if !before_year.is_empty() {
-                let title_raw = clean_final_title(before_year);
+                // Strip technical tokens that may sit between the title and the
+                // year (e.g. "A Christmas Carol 3D 2009" → "3D" is noise).
+                // Without this, only edge-trim runs and "3D" leaks into the
+                // title, dragging Levenshtein similarity below 1.0.
+                let mut cleaned_before = before_year.to_string();
+                for _ in 0..3 {
+                    let prev = cleaned_before.clone();
+                    cleaned_before = strip_noise_tokens(&cleaned_before);
+                    if cleaned_before == prev { break; }
+                }
+                let title_raw = clean_final_title(&cleaned_before);
                 if !title_raw.is_empty() {
                     let (title, alt_title) = extract_titles(&title_raw);
                     return ParsedName { title, alt_title, year: Some(y) };
@@ -356,10 +371,32 @@ pub fn parse_directory_name(name: &str) -> ParsedName {
     }
 
     let title_raw = clean_final_title(&working);
-    let (title, alt_title) = extract_titles(&title_raw);
+    let (mut title, mut alt_title) = extract_titles(&title_raw);
+
+    // Box-set heuristic: directory names like "AMARCORD_ESSENTIAL_FELLINI_DISC12"
+    // include disc markers + box-set name. After stripping the disc marker we'd
+    // still send "AMARCORD ESSENTIAL FELLINI" to TMDB. When the original name
+    // had a disc/CD marker AND the cleaned title is multi-token, keep only the
+    // first token as the primary title (the rest is likely the box-set name).
+    if BOX_SET_DISC_RE.is_match(&normalized) {
+        let tokens: Vec<&str> = title.split_whitespace().collect();
+        if tokens.len() >= 2 {
+            let head = tokens[0].to_string();
+            let rest = tokens[1..].join(" ");
+            title = head;
+            if alt_title.is_none() && !rest.is_empty() {
+                alt_title = Some(rest);
+            }
+        }
+    }
 
     ParsedName { title, alt_title, year }
 }
+
+/// Detect multi-disc / multi-part box-set markers in the original directory name.
+static BOX_SET_DISC_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(?:^|[\s.\-_/()\[\]@])(?:Disc[\s._-]?\d+|CD\d+|DVD\d+|Part[\s._-]?\d+)(?:[\s.\-_/()\[\]@]|$)").unwrap()
+});
 
 /// Normalize dots and underscores to spaces, handling abbreviations.
 fn normalize_separators(name: &str) -> String {
@@ -439,9 +476,10 @@ fn extract_best_year(text: &str) -> Option<u16> {
 
 /// Find the position where year splits title from technical info.
 /// Handles cases where the year value also appears as part of the title.
+#[allow(dead_code)]
 fn find_year_split_pos(text: &str, year_str: &str) -> Option<usize> {
     let year_val: u16 = year_str.parse().ok()?;
-    let text_lower = text.to_lowercase();
+    let _text_lower = text.to_lowercase();
 
     // Find all occurrences of this year in the text
     let mut positions: Vec<usize> = Vec::new();
@@ -514,6 +552,7 @@ fn find_year_split_pos(text: &str, year_str: &str) -> Option<usize> {
 }
 
 /// Find ALL years in text, returned in order of appearance.
+#[allow(dead_code)]
 fn find_all_years(text: &str) -> Vec<u16> {
     let mut years = Vec::new();
     for cap in YEAR_RE.captures_iter(text) {
@@ -550,6 +589,7 @@ static CONCAT_NOISE_RE: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// Audio channel patterns that may be concatenated (e.g., "5.1" standalone)
+#[allow(dead_code)]
 static CHANNEL_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:^|\s)(?:[257]\.[01]|[2568]ch|mono|stereo)(?:\s|$)").unwrap()
 });
@@ -713,6 +753,40 @@ mod tests {
         let p = parse_directory_name("2046.2004.Criterion.Collection.1080p.Blu-ray.AVC.DTS-HD.MA.5.1-DiY@HDHome");
         assert_eq!(p.title, "2046");
         assert_eq!(p.year, Some(2004));
+    }
+
+    #[test]
+    fn real_world_christmas_carol_3d_strips_3d_before_year() {
+        // 3D tag between title and year was leaking into the title because
+        // truncate-before-year only edge-trimmed without stripping noise tokens.
+        // After fix: "A Christmas Carol 3D" → "A Christmas Carol" (full
+        // Levenshtein 1.0, score ≥ 0.9, auto-confirms).
+        let p = parse_directory_name("A Christmas Carol.3D.2009.1080P.BluRay.AVC. DTS-HD.iso");
+        assert_eq!(p.title, "A Christmas Carol");
+        assert_eq!(p.year, Some(2009));
+    }
+
+    #[test]
+    fn parse_keeps_real_in_title() {
+        // "REAL" used to live in the noise stoplist as a scene re-release tag,
+        // but it destroyed legit titles where Real is a normal English word.
+        // Don't re-add it.
+        let p = parse_directory_name("Real.Steel.2011.1080p.BluRay-GROUP");
+        assert_eq!(p.title, "Real Steel");
+        assert_eq!(p.year, Some(2011));
+
+        let p2 = parse_directory_name("The.Real.Thing.1996.DVDRip-XYZ");
+        assert_eq!(p2.title, "The Real Thing");
+        assert_eq!(p2.year, Some(1996));
+    }
+
+    #[test]
+    fn real_world_amarcord_box_set() {
+        // Box set / multi-disc DVD with director name in the dir: AMARCORD is the
+        // film, ESSENTIAL FELLINI is the box-set name, DISC12 is the disc number.
+        // parser should extract "AMARCORD" as the title.
+        let p = parse_directory_name("AMARCORD_ESSENTIAL_FELLINI_DISC12");
+        assert_eq!(p.title, "AMARCORD");
     }
 
     #[test]

@@ -173,4 +173,51 @@ impl EmbeddingStore {
         }
         Ok(ids)
     }
+
+    /// Look up the stored `text` payload for a set of movie_ids. Used by the
+    /// rebuild worker to detect when build_embedding_text would now produce a
+    /// different string and the row needs re-encoding. Movies missing from
+    /// the index are simply absent from the returned map.
+    pub async fn get_texts_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, String>, Box<dyn std::error::Error + Send + Sync>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let table = self.db.open_table("movies").execute().await?;
+        let id_list = ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let stream = table
+            .query()
+            .only_if(format!("movie_id IN ({})", id_list))
+            .select(lancedb::query::Select::Columns(vec![
+                "movie_id".to_string(),
+                "text".to_string(),
+            ]))
+            .execute()
+            .await?;
+
+        use futures::TryStreamExt;
+        let batches: Vec<RecordBatch> = stream.try_collect().await?;
+
+        let mut out = std::collections::HashMap::with_capacity(ids.len());
+        for batch in &batches {
+            let id_col = batch
+                .column_by_name("movie_id")
+                .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+                .expect("movie_id column");
+            let text_col = batch
+                .column_by_name("text")
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                .expect("text column");
+            for i in 0..batch.num_rows() {
+                out.insert(id_col.value(i), text_col.value(i).to_string());
+            }
+        }
+        Ok(out)
+    }
 }

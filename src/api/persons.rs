@@ -54,11 +54,14 @@ async fn get_person(
         }
     }
 
-    let tmdb_client = crate::tmdb::client::TmdbClient::new(
-        &state.config.tmdb.api_key,
-        &state.config.tmdb.language,
-        state.config.tmdb.proxy.as_deref(),
-    );
+    let tmdb_client = {
+        let config = state.config.read().await;
+        crate::tmdb::client::TmdbClient::new(
+            &config.tmdb.api_key,
+            &config.tmdb.language,
+            config.tmdb.proxy.as_deref(),
+        )
+    };
 
     let detail = tmdb_client
         .get_person_detail(tmdb_person_id)
@@ -101,7 +104,7 @@ fn person_to_response(p: db::Person) -> PersonResponse {
     let profile_url = p
         .profile_path
         .as_ref()
-        .map(|path| format!("https://image.tmdb.org/t/p/w500{}", path));
+        .map(|path| format!("{}{}", crate::tmdb::client::TMDB_IMG_BASE, path));
 
     PersonResponse {
         tmdb_person_id: p.tmdb_person_id,
@@ -168,6 +171,8 @@ mod tests {
                 department: Some("Directing".into()),
                 order: Some(0),
                 profile_path: None,
+                person_name_en: None,
+                role_en: None,
             }],
         )
         .await
@@ -220,11 +225,14 @@ async fn person_movies(
     let person_name = if let Ok(Some(person)) = db::get_person_by_tmdb_id(&state.pool, tmdb_person_id).await {
         person.name
     } else {
-        let tmdb_client = crate::tmdb::client::TmdbClient::new(
-            &state.config.tmdb.api_key,
-            &state.config.tmdb.language,
-            state.config.tmdb.proxy.as_deref(),
-        );
+        let tmdb_client = {
+            let config = state.config.read().await;
+            crate::tmdb::client::TmdbClient::new(
+                &config.tmdb.api_key,
+                &config.tmdb.language,
+                config.tmdb.proxy.as_deref(),
+            )
+        };
 
         match tmdb_client.get_person_detail(tmdb_person_id).await {
             Ok(detail) => {

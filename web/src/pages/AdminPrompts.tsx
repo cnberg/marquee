@@ -58,10 +58,12 @@ export default function AdminPrompts() {
     inspire: t('prompt_label_inspire'),
     'query-understand': t('prompt_label_query-understand'),
     'smart-rank': t('prompt_label_smart-rank'),
+    'query-classify': t('prompt_label_query-classify'),
+    'person-pick': t('prompt_label_person-pick'),
   }
 
   const fileNameOf = (p: PromptInfo): string => {
-    const hasEn = ['recommend-filter', 'recommend-pick', 'inspire'].includes(p.name)
+    const hasEn = ['recommend-filter', 'recommend-pick', 'inspire', 'query-classify', 'person-pick'].includes(p.name)
     if (hasEn && p.locale === 'en') return `${p.name}.en.md`
     return `${p.name}.md`
   }
@@ -140,7 +142,7 @@ export default function AdminPrompts() {
         )}
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="space-y-3">
         {prompts.map((p) => {
           const state = editStates[p.name]
           const dirty = state && state.draft !== p.content

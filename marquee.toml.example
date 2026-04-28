@@ -1,6 +1,16 @@
 [scan]
-movie_dir = "/tmp/movies"
+movie_dirs = [
+  "/tmp/movies",
+  # "ssh://user@host/path/to/movies",
+]
 interval_hours = 6
+# 多久跑一次"版本过期重抓"的 worker（按 CURRENT_TMDB_FETCH_VERSION 挑人）
+refresh_interval_hours = 1
+# 每次最多入队多少部电影到 tmdb_fetch 队列
+refresh_batch_size = 60
+# 用于 ssh:// 远端目录扫描的私钥路径。留空时依次回落到
+# ~/.ssh/{id_ed25519,id_rsa,id_ecdsa}。仅支持空 passphrase 的 key。
+# ssh_key_path = "/Users/berg/.ssh/id_ed25519"
 
 [tmdb]
 api_key = "your-tmdb-api-key"
@@ -19,3 +29,11 @@ port = 8080
 
 [database]
 path = "./data/marquee.db"
+
+[qbittorrent]
+enabled = false
+base_url = "http://localhost:8080"
+username = "admin"
+password = ""
+save_path = "/volume1/movie"
+poll_interval_hours = 6

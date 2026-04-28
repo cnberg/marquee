@@ -7,6 +7,7 @@
 年代分布：{{decades}}
 导演：{{directors}}
 高频演员：{{cast}}
+高频关键词（英文，TMDB 标准词汇）：{{keywords}}
 评分分布：{{ratings}}
 制作成本分布：{{budgets}}
 {{user_history}}
@@ -14,13 +15,18 @@
 请根据用户的查询，输出以下 JSON 结构。注意：
 
 1. constraints 中的字段是硬性过滤条件。如果用户**明确指定**或**强烈暗示**了某个约束，就填写。例如"经典老电影"暗示了年代较早（如 1950-1980 年代），"港片"暗示了 countries: ["HK"]。但如果只是氛围描述（如"温暖的"），不要推断为具体约束。
+   - **风格/形式/媒介类定语必须进硬约束（不是 preferences）**——用户用这种词往往意味着"必须是"。具体进哪个字段看它本身是什么：
+     - 本身就是 TMDB **genre** 的（"动画"/"纪录"/"喜剧"/"剧情"等，"类型分布"列表里能查到）→ 进 `constraints.genres`
+     - 不是 genre 但是一种风格/形式/媒介（"黑白"→`"black and white"`、"默片"→`"silent film"`、"IMAX"→`"imax"`）→ 进 `constraints.keywords`
 2. preferences 中的字段是软性偏好，不会用于过滤，只用于排序加分。**你应该积极使用 preferences**——大多数查询都应该有 preferences。规则：
-   - 如果用户提到了某种氛围、心情、风格，把相关的 genres/keywords/decades 放 preferences
+   - 如果用户提到了某种氛围、心情、扩展风格，把相关的 genres/keywords/decades 放 preferences
    - 如果用户提到的类型/年代在 constraints 里已有，仍然可以在 preferences 里放**关联的扩展类型**。例如 constraints 有"科幻"，preferences 可以放 ["冒险", "动作"]
    - 如果用户没有明确指定导演/国家，但查询暗示了某种偏好（如"日式动画"暗示 JP），放 preferences 而不是 constraints
    - keywords 字段特别重要：根据用户描述联想 3-5 个相关的英文 TMDB 关键词放入 preferences.keywords
+   - **keywords 必须对齐到库里实际存在的词汇**：优先从上面"高频关键词"列表里挑。如果列表里没有完全对应的，选一个语义最接近的；避免自己生造新词（例如库里是 `"black and white"`，不要用 `"monochrome"`、`"b&w"` 等变体）。这条对 constraints.keywords 和 preferences.keywords / exclusions.keywords 都适用。
+   - **keywords 默认放 preferences，不放 constraints**——TMDB keyword 标注不完整，同一类电影有些打了标签有些没打，作为硬过滤会误杀大量相关结果。只有当用户查询的核心就是某个明确的视觉/形式特征（如"黑白电影""默片""IMAX"）时，才把对应 keyword 放 constraints。像"改编自小说""太空题材""有反转结局"这类内容描述性 keyword，放 preferences 即可。
 3. exclusions 中的字段是用户明确排除的条件（如"不要恐怖片"）。
-4. search_intents 是语义搜索向量，会用来和电影的「标题 + 剧情简介 + 类型标签 + 关键词」做 embedding 余弦相似度匹配。因此，你必须写成**像电影剧情梗概一样具体的描述**，包含场景、角色类型、情节元素、情感氛围等具体细节。不要写抽象的类型描述。1~3 条，每条 30~100 字。
+4. search_intents 是语义搜索向量，会用来和电影的「标题 + 剧情简介 + 类型标签 + 关键词」做 embedding 余弦相似度匹配。因此，你必须写成**像电影剧情梗概一样具体的描述**，包含场景、角色类型、情节元素、情感氛围等具体细节。不要写抽象的类型描述。1~3 条，每条 30~100 字。**必须用中文写**——影片库的 title/overview/genres 都是中文，embedding 模型也是中文向量空间，英文 search_intent 召回的语义相关性会大幅退化。
 5. sort_rules 定义排序优先级，weight 之和必须为 1.0。order 为 "asc"（升序）或 "desc"（降序）。例如用户想看老电影，year 应该用 "asc"；想看高分电影，rating 应该用 "desc"。
 6. query_type 表示查询类型：keyword（用户在找一部具体的已知电影）、semantic（用户描述一种感觉/氛围/类型偏好）、mixed（两者兼有）。
 7. **省略空字段**：如果某个字段值为 null、空数组 [] 或空对象 {}，直接不返回该字段。只返回有实际值的字段。
@@ -43,7 +49,7 @@ sort_rules 字段：field、weight、order
 - decades: 纯整数，如 1990、2000、2010
 - directors: 中文名，必须从上面"导演"列表中选取
 - cast: 中文名，必须从上面"高频演员"列表中选取
-- keywords: 英文 TMDB 关键词，如 "time travel"、"dystopia"、"based on novel or book"
+- keywords: 英文 TMDB 关键词，优先从"高频关键词"列表中选取，例如 "black and white"、"based on novel or book"、"dystopia"
 - min_rating / max_rating: 0.0~10.0 的数字
 - runtime_range.min / max: 分钟数（整数）
 - budget_tier: "low"（<$5M）/ "medium"（$5M-$50M）/ "high"（>$50M）
@@ -63,6 +69,9 @@ sort_rules 字段：field、weight、order
 
 用户: "下雨天一个人在家适合看什么"
 {"preferences":{"genres":["剧情","爱情"],"keywords":["loneliness","rain","melancholy","introspection","solitude"],"popularity_tier":"niche"},"search_intents":["一个人独自在公寓或小屋中度过漫长的夜晚，窗外下着雨，回忆过去的人和事","安静的小镇生活，主角在书店、咖啡馆或图书馆中寻找内心的平静","失意的作家或艺术家独自旅行，沿途遇见陌生人，展开一段短暂而深刻的对话"],"sort_rules":[{"field":"relevance","weight":1.0,"order":"desc"}],"query_type":"semantic"}
+
+用户: "小李子的黑白电影"
+{"constraints":{"cast":["莱昂纳多·迪卡普里奥"],"keywords":["black and white"]},"preferences":{"genres":["剧情"],"keywords":["old hollywood","drama"]},"search_intents":["一位演员在黑白胶片质感的电影中诠释复杂角色，光影对比强烈","怀旧年代感的人物传记片，演员在老派摄影风格下呈现细腻表演","经典黑白叙事手法拍摄的剧情片，聚焦人物命运起伏"],"sort_rules":[{"field":"rating","weight":0.6,"order":"desc"},{"field":"year","weight":0.4,"order":"desc"}],"query_type":"mixed"}
 
 用户: "推荐几部评分8分以上的冷门科幻片，不要恐怖的"
 {"constraints":{"genres":["科幻"],"min_rating":8.0},"preferences":{"genres":["剧情","悬疑"],"popularity_tier":"niche","keywords":["dystopia","time travel","artificial intelligence","space exploration","philosophical"]},"exclusions":{"genres":["恐怖"],"keywords":["horror"]},"search_intents":["未来反乌托邦社会中，一个普通人发现了系统的秘密，踏上反抗之路","宇航员在深空执行任务时遭遇未知现象，面对孤独和存在主义的拷问","科学家发明了时间机器或人工智能，却引发了意想不到的伦理困境"],"sort_rules":[{"field":"rating","weight":0.6,"order":"desc"},{"field":"relevance","weight":0.4,"order":"desc"}],"query_type":"mixed","watched_policy":"exclude"}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import MovieCard from '../components/MovieCard'
+import { MovieGrid } from '../components/MovieGrid'
 import { api } from '../api/client'
 import type { Movie, Person } from '../types'
 import { useMovieMarks } from '../hooks/useMovieMarks'
@@ -102,17 +102,19 @@ export default function Browse() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <Badge variant="secondary">{typeLabel}</Badge>
-          <h1 className="text-2xl font-semibold leading-tight">{name}</h1>
+      {!((type === 'director' || type === 'cast') && personId && person) && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary">{typeLabel}</Badge>
+            <h1 className="text-2xl font-semibold leading-tight">{name}</h1>
+          </div>
+          {total > 0 && (
+            <p className="text-sm text-muted-foreground">
+              {t('browse_total', { count: total })}
+            </p>
+          )}
         </div>
-        {total > 0 && (
-          <p className="text-sm text-muted-foreground">
-            {t('browse_total', { count: total })}
-          </p>
-        )}
-      </div>
+      )}
 
       {(type === 'director' || type === 'cast') && personId && (
         personLoading ? (
@@ -136,11 +138,15 @@ export default function Browse() {
                 <div className="h-20 w-20 rounded-full bg-muted" />
               )}
               <div className="space-y-2">
-                <CardTitle>{person.name}</CardTitle>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">{typeLabel}</Badge>
+                  <CardTitle>{person.name}</CardTitle>
+                </div>
                 <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
                   {person.birthday && <span>{person.birthday}</span>}
                   {person.deathday && <span> — {person.deathday}</span>}
                   {person.place_of_birth && <span> · {person.place_of_birth}</span>}
+                  {total > 0 && <span> · {t('browse_total', { count: total })}</span>}
                 </div>
                 {person.also_known_as.length > 0 && (
                   <div className="text-sm text-muted-foreground">
@@ -179,16 +185,11 @@ export default function Browse() {
       )}
 
       {!loading && movies.length > 0 && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {movies.map((movie) => (
-            <MovieCard
-              key={movie.id}
-              movie={movie}
-              marks={marks[movie.id]}
-              onToggleMark={(mt) => { toggle(movie.id, mt) }}
-            />
-          ))}
-        </div>
+        <MovieGrid
+          items={movies.map((movie) => ({ movie }))}
+          marks={marks}
+          onToggleMark={(movieId, mt) => { toggle(movieId, mt) }}
+        />
       )}
 
       {totalPages > 1 && (

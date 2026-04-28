@@ -7,9 +7,10 @@ import { useLocale } from '../i18n/LocaleContext'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
-import { Badge } from '../components/ui/badge'
 import { Alert, AlertDescription } from '../components/ui/alert'
 import { ScrollArea } from '../components/ui/scroll-area'
+import { Separator } from '../components/ui/separator'
+import { Badge } from '../components/ui/badge'
 
 export default function AdminPending() {
   const { t } = useLocale()
@@ -28,13 +29,13 @@ export default function AdminPending() {
   const [searchError, setSearchError] = useState<string | null>(null)
 
   const [bindingId, setBindingId] = useState<number | null>(null)
+  const [refetching, setRefetching] = useState(false)
+  const [refetchMessage, setRefetchMessage] = useState<string | null>(null)
 
   const loadPending = useCallback(async (): Promise<PendingDir[]> => {
     setPendingLoading(true)
     setPendingError(null)
     try {
-      // Sidebar lists all pending dirs without pagination UI, so override
-      // backend's default per_page=20 limit. Real data is a few hundred rows.
       const res = await api.listPending({ per_page: '5000' })
       const list: PendingDir[] = Array.isArray(res) ? res : res?.data ?? []
 
@@ -122,6 +123,27 @@ export default function AdminPending() {
     }
   }
 
+  const handleRefetch = async () => {
+    if (!selectedDirId || refetching) return
+    setRefetching(true)
+    setRefetchMessage(null)
+    try {
+      await api.refetchDir(selectedDirId)
+      setRefetchMessage(t('pending_refetch_success'))
+      // Wait briefly for worker to process, then reload list and candidates
+      setTimeout(async () => {
+        const updated = await loadPending()
+        if (updated.some((d) => d.dir_id === selectedDirId)) {
+          await loadCandidates(selectedDirId)
+        }
+      }, 1500)
+    } catch (err) {
+      setRefetchMessage(err instanceof Error ? err.message : t('pending_refetch_error'))
+    } finally {
+      setRefetching(false)
+    }
+  }
+
   const handleSearch = async (evt: FormEvent) => {
     evt.preventDefault()
     if (!searchQuery.trim()) return
@@ -141,9 +163,13 @@ export default function AdminPending() {
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[320px,1fr]">
-      <Card className="p-4">
+    <div className="grid max-w-5xl gap-4 lg:grid-cols-[280px,1fr]">
+      {/* --- Sidebar: pending directory list --- */}
+      <Card className="min-w-0 p-4">
         <h2 className="text-lg font-semibold">{t('admin_nav_pending')}</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {pendingDirs.length > 0 && `${pendingDirs.length} ${t('pending_count_suffix')}`}
+        </p>
         {pendingLoading && <div className="mt-3 text-sm text-muted-foreground">{t('pending_loading')}</div>}
         {pendingError && (
           <Alert variant="destructive" className="mt-3">
@@ -153,21 +179,20 @@ export default function AdminPending() {
         {!pendingLoading && !pendingError && pendingDirs.length === 0 && (
           <div className="mt-3 text-sm text-muted-foreground">{t('pending_empty')}</div>
         )}
-        <ScrollArea className="mt-3 h-[520px]">
-          <div className="space-y-2">
+        <ScrollArea className="mt-3 h-[560px]">
+          <div className="space-y-1.5 pr-2">
             {pendingDirs.map((dir) => (
               <button
                 key={dir.dir_id}
                 type="button"
-                className={`w-full rounded-md border px-3 py-2 text-left transition hover:border-primary ${selectedDirId === dir.dir_id ? 'border-primary bg-primary/10' : 'border-border bg-card'}`}
+                className={`w-full rounded-md border px-3 py-2 text-left transition hover:border-primary ${selectedDirId === dir.dir_id ? 'border-primary bg-primary/10' : 'border-transparent bg-transparent'}`}
                 onClick={() => setSelectedDirId(dir.dir_id)}
               >
-                <div className="font-semibold leading-tight">{dir.dir_name}</div>
-                <div className="truncate text-xs text-muted-foreground">{dir.dir_path}</div>
-                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                <div className="truncate text-sm font-medium leading-tight">{dir.dir_name}</div>
+                <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
                   <span>{dir.match_status}</span>
                   {typeof dir.confidence === 'number' && (
-                    <Badge variant="secondary">{t('pending_confidence')} {Math.round(dir.confidence * 100)}%</Badge>
+                    <span>{Math.round(dir.confidence * 100)}%</span>
                   )}
                 </div>
               </button>
@@ -176,7 +201,8 @@ export default function AdminPending() {
         </ScrollArea>
       </Card>
 
-      <div className="space-y-4">
+      {/* --- Main panel --- */}
+      <div className="min-w-0 space-y-4">
         {!pendingLoading && !pendingDirs.length && (
           <div className="rounded-lg border border-dashed bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
             {t('pending_empty')}
@@ -184,48 +210,65 @@ export default function AdminPending() {
         )}
 
         {pendingDirs.length > 0 && selectedDir && (
-          <Card className="space-y-4 p-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <>
+            {/* Selected directory header */}
+            <Card className="overflow-hidden p-4">
               <div className="space-y-1">
-                <h2 className="text-xl font-semibold">{selectedDir.dir_name}</h2>
-                <div className="text-sm text-muted-foreground">{selectedDir.dir_path}</div>
+                <h2 className="truncate text-lg font-semibold">{selectedDir.dir_name}</h2>
+                <div className="truncate text-xs font-mono text-muted-foreground">{selectedDir.dir_path}</div>
               </div>
-              <Badge variant="secondary">{t('pending_system_candidates')}</Badge>
-            </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleRefetch}
+                  disabled={refetching}
+                >
+                  {refetching ? t('pending_refetching') : t('pending_refetch_btn')}
+                </Button>
+                <Badge variant="secondary">{t('pending_system_candidates')}</Badge>
+              </div>
+            </Card>
 
-            {candidatesLoading ? (
-              <div className="text-sm text-muted-foreground">{t('pending_candidates_loading')}</div>
-            ) : candidatesError ? (
-              <Alert variant="destructive">
-                <AlertDescription>{candidatesError}</AlertDescription>
+            {/* System candidates */}
+            <div className="space-y-2">
+              {candidatesLoading ? (
+                <div className="text-sm text-muted-foreground">{t('pending_candidates_loading')}</div>
+              ) : candidatesError ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{candidatesError}</AlertDescription>
+                </Alert>
+              ) : (
+                <CandidateList
+                  candidates={candidates}
+                  onSelect={(tmdbId) => !bindingId && handleBind(tmdbId)}
+                  emptyText={t('pending_no_candidates')}
+                />
+              )}
+            </div>
+            {refetchMessage && (
+              <Alert>
+                <AlertDescription>{refetchMessage}</AlertDescription>
               </Alert>
-            ) : (
-              <CandidateList
-                candidates={candidates}
-                onSelect={(tmdbId) => !bindingId && handleBind(tmdbId)}
-                emptyText={t('pending_no_candidates')}
-              />
             )}
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold">{t('pending_manual_search')}</h3>
-                  <p className="text-sm text-muted-foreground">{t('pending_search_hint')}</p>
-                </div>
-                <Badge variant="outline">{t('pending_search_tab')}</Badge>
-              </div>
+            <Separator />
 
-              <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
+            {/* Manual TMDB search */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-medium text-muted-foreground">{t('pending_manual_search')}</h3>
+
+              <form className="flex gap-2" onSubmit={handleSearch}>
                 <Input
                   type="search"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={t('pending_search_placeholder')}
                   aria-label={t('pending_search_aria')}
-                  className="flex-1"
+                  className="min-w-0 flex-1"
                 />
-                <Button type="submit" disabled={searchLoading}>
+                <Button type="submit" disabled={searchLoading} className="shrink-0">
                   {searchLoading ? t('pending_searching') : t('pending_search_btn')}
                 </Button>
               </form>
@@ -238,7 +281,7 @@ export default function AdminPending() {
 
               {searchLoading ? (
                 <div className="text-sm text-muted-foreground">{t('pending_searching')}</div>
-              ) : (
+              ) : searchResults.length > 0 && (
                 <CandidateList
                   candidates={searchResults}
                   onSelect={(tmdbId) => !bindingId && handleBind(tmdbId)}
@@ -246,7 +289,7 @@ export default function AdminPending() {
                 />
               )}
             </div>
-          </Card>
+          </>
         )}
       </div>
     </div>

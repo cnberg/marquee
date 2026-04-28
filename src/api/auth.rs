@@ -64,13 +64,16 @@ async fn register(
     };
 
     let user_id = query_result.last_insert_rowid();
-    let token = jwt::create_token(
-        user_id,
-        &body.username,
-        &state.config.auth.jwt_secret,
-        state.config.auth.jwt_expiry_days,
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let token = {
+        let config = state.config.read().await;
+        jwt::create_token(
+            user_id,
+            &body.username,
+            &config.auth.jwt_secret,
+            config.auth.jwt_expiry_days,
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    };
 
     let resp = AuthResponse {
         token,
@@ -106,13 +109,16 @@ async fn login(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let token = jwt::create_token(
-        user_id,
-        &username,
-        &state.config.auth.jwt_secret,
-        state.config.auth.jwt_expiry_days,
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let token = {
+        let config = state.config.read().await;
+        jwt::create_token(
+            user_id,
+            &username,
+            &config.auth.jwt_secret,
+            config.auth.jwt_expiry_days,
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    };
 
     Ok(Json(AuthResponse {
         token,

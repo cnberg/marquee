@@ -16,27 +16,47 @@ interface LocaleContextValue {
 
 const LocaleContext = createContext<LocaleContextValue | null>(null)
 
+const LOCALE_STORAGE_KEY = 'marquee.locale'
+
+function readStoredLocale(): Locale | null {
+  try {
+    const v = localStorage.getItem(LOCALE_STORAGE_KEY)
+    return v === 'en' || v === 'zh' ? v : null
+  } catch {
+    return null
+  }
+}
+
 export function LocaleProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>('en')
-  const [loaded, setLoaded] = useState(false)
+  // Initial state: localStorage first (instant, no server roundtrip).
+  // Server settings layered on top for logged-in users in useEffect below.
+  const [locale, setLocaleState] = useState<Locale>(() => readStoredLocale() ?? 'en')
 
   useEffect(() => {
+    // Best-effort sync from server settings. Failures (401 for anon, network)
+    // don't unwind state — localStorage is the source of truth for client UI.
     api
       .adminGetSettings()
       .then((res) => {
         if (res.locale === 'en' || res.locale === 'zh') {
           setLocaleState(res.locale)
+          try { localStorage.setItem(LOCALE_STORAGE_KEY, res.locale) } catch { /* ignore */ }
         }
       })
       .catch(() => {
-        // default to 'en' on error
+        // Anon user (401) or offline. Local state already initialized from
+        // localStorage; nothing to do.
       })
-      .finally(() => setLoaded(true))
   }, [])
 
   const setLocale = async (newLocale: Locale) => {
-    await api.adminUpdateSettings({ locale: newLocale })
+    // Update UI synchronously — never block on the server. PUT /api/admin/settings
+    // requires login; for anon users it returns 401 and the await would throw,
+    // which previously left state unchanged and made the toggle look "无法点击".
     setLocaleState(newLocale)
+    try { localStorage.setItem(LOCALE_STORAGE_KEY, newLocale) } catch { /* ignore */ }
+    // Fire-and-forget server persist for cross-device sync; swallow auth errors.
+    api.adminUpdateSettings({ locale: newLocale }).catch(() => { /* anon 401, ignore */ })
   }
 
   const t = (key: string, params?: Record<string, string | number>): string => {
@@ -48,8 +68,6 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     }
     return text
   }
-
-  if (!loaded) return null
 
   return <LocaleContext.Provider value={{ locale, setLocale, t }}>{children}</LocaleContext.Provider>
 }

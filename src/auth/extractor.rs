@@ -38,10 +38,11 @@ where
         state: &S,
     ) -> impl futures::Future<Output = Result<Self, Self::Rejection>> + Send {
         let app_state = AppState::from_ref(state);
-        let secret = app_state.config.auth.jwt_secret.clone();
+        let config_lock = app_state.config.clone();
         let token = extract_token(parts);
 
         async move {
+            let secret = config_lock.read().await.auth.jwt_secret.clone();
             if let Some(token) = token {
                 if let Ok(claims) = jwt::verify_token(&token, &secret) {
                     return Ok(OptionalUser(Some(AuthUser {
@@ -68,10 +69,11 @@ where
         state: &S,
     ) -> impl futures::Future<Output = Result<Self, Self::Rejection>> + Send {
         let app_state = AppState::from_ref(state);
-        let secret = app_state.config.auth.jwt_secret.clone();
+        let config_lock = app_state.config.clone();
         let token = extract_token(parts);
 
         async move {
+            let secret = config_lock.read().await.auth.jwt_secret.clone();
             if let Some(token) = token {
                 if let Ok(claims) = jwt::verify_token(&token, &secret) {
                     return Ok(RequireUser(AuthUser {

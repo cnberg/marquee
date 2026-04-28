@@ -17,7 +17,11 @@ pub struct TmdbClient {
 }
 
 const DEFAULT_TMDB_BASE_URL: &str = "https://api.themoviedb.org/3";
+pub const TMDB_IMG_BASE: &str = "https://image.tmdb.org/t/p/w500";
+const TMDB_MAX_CONCURRENT: usize = 4;
+const TMDB_RATE_LIMIT_SLEEP_MS: u64 = 260;
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TmdbSearchResponse {
     pub results: Vec<TmdbSearchResult>,
@@ -39,6 +43,7 @@ pub struct TmdbSearchResult {
     pub original_language: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TmdbMovieDetail {
     pub id: i64,
@@ -59,12 +64,14 @@ pub struct TmdbMovieDetail {
     pub popularity: Option<f64>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TmdbGenre {
     pub id: i64,
     pub name: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TmdbCountry {
     pub iso_3166_1: String,
@@ -104,6 +111,7 @@ pub struct TmdbKeyword {
     pub name: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TmdbPersonDetail {
     pub id: i64,
@@ -116,6 +124,7 @@ pub struct TmdbPersonDetail {
     pub place_of_birth: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TmdbImagesResponse {
     pub posters: Option<Vec<TmdbImage>>,
@@ -131,6 +140,7 @@ pub struct TmdbImage {
 }
 
 /// Full movie response with all append_to_response sub-resources
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TmdbMovieFull {
     pub id: i64,
@@ -347,6 +357,7 @@ pub struct TmdbListItem {
     pub iso_639_1: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TmdbChangesResponse {
     pub changes: Option<Vec<serde_json::Value>>,
@@ -366,7 +377,7 @@ impl TmdbClient {
             api_key: api_key.to_string(),
             language: language.to_string(),
             base_url: DEFAULT_TMDB_BASE_URL.to_string(),
-            semaphore: Arc::new(Semaphore::new(4)),
+            semaphore: Arc::new(Semaphore::new(TMDB_MAX_CONCURRENT)),
         }
     }
 
@@ -382,7 +393,7 @@ impl TmdbClient {
             api_key: api_key.to_string(),
             language: language.to_string(),
             base_url: base_url.trim_end_matches('/').to_string(),
-            semaphore: Arc::new(Semaphore::new(4)),
+            semaphore: Arc::new(Semaphore::new(TMDB_MAX_CONCURRENT)),
         }
     }
 
@@ -390,7 +401,7 @@ impl TmdbClient {
         let _permit = self.semaphore.acquire().await.unwrap();
         let resp = self.client.get(url).send().await?;
         // Small delay to stay under TMDB rate limits
-        sleep(Duration::from_millis(260)).await;
+        sleep(Duration::from_millis(TMDB_RATE_LIMIT_SLEEP_MS)).await;
         Ok(resp)
     }
 
@@ -454,6 +465,7 @@ impl TmdbClient {
     }
 
     /// Fetch basic movie detail in a specific language (for bilingual fields).
+    #[allow(dead_code)]
     pub async fn get_movie_basic(
         &self,
         tmdb_id: i64,
@@ -468,6 +480,24 @@ impl TmdbClient {
         Ok(detail)
     }
 
+    /// Fetch movie with credits + keywords appended in a specific language.
+    /// Lighter than `get_movie_full` — used for bilingual enrichment (en-US)
+    /// where we only need translated credits/keywords/collection/companies.
+    pub async fn get_movie_full_minimal(
+        &self,
+        tmdb_id: i64,
+        language: &str,
+    ) -> Result<TmdbMovieFull, Box<dyn std::error::Error + Send + Sync>> {
+        let url = format!(
+            "{}/movie/{}?api_key={}&language={}&append_to_response=credits,keywords",
+            self.base_url, tmdb_id, self.api_key, language
+        );
+        let resp = self.rate_limited_get(&url).await?;
+        let full: TmdbMovieFull = resp.json().await?;
+        Ok(full)
+    }
+
+    #[allow(dead_code)]
     pub async fn get_movie_credits(
         &self,
         tmdb_id: i64,
@@ -481,6 +511,7 @@ impl TmdbClient {
         Ok(credits)
     }
 
+    #[allow(dead_code)]
     pub async fn get_movie_keywords(
         &self,
         tmdb_id: i64,
@@ -507,6 +538,7 @@ impl TmdbClient {
         Ok(detail)
     }
 
+    #[allow(dead_code)]
     pub async fn get_movie_images(
         &self,
         tmdb_id: i64,

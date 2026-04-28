@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import MovieCard from '../components/MovieCard'
+import { MovieGrid } from '../components/MovieGrid'
 import { useAuth } from '../auth/AuthContext'
 import { useLocale } from '../i18n/LocaleContext'
 import type { Movie } from '../types'
@@ -114,7 +114,7 @@ export default function MyMarks() {
       </Tabs>
 
       {loading && (
-        <div className="rounded-lg border bg-card px-4 py-6 text-sm text-muted-foreground">
+        <div className="rounded-lg bg-card px-4 py-6 text-sm text-muted-foreground shadow-md">
           {t('common_loading')}
         </div>
       )}
@@ -126,22 +126,17 @@ export default function MyMarks() {
       )}
 
       {!loading && sorted.length === 0 && (
-        <div className="rounded-lg border border-dashed bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
+        <div className="rounded-lg bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
           {t('marks_empty')}
         </div>
       )}
 
       {sorted.length > 0 && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {sorted.map((movie) => (
-            <MovieCard
-              key={movie.id}
-              movie={movie}
-              marks={marks[movie.id]}
-              onToggleMark={(mt) => { handleToggle(movie.id, mt) }}
-            />
-          ))}
-        </div>
+        <MovieGrid
+          items={sorted.map((movie) => ({ movie }))}
+          marks={marks}
+          onToggleMark={handleToggle}
+        />
       )}
     </div>
   )

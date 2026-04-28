@@ -40,7 +40,7 @@ export function MovieMarkButtons({ movieId, marks, onToggle, size = 'sm' }: Movi
   ]
 
   return (
-    <div className="flex items-center gap-2" data-movie={movieId}>
+    <div className="flex items-center gap-1 sm:gap-2" data-movie={movieId}>
       {buttons.map(({ key, label, icon }) => (
         <Button
           key={key}
@@ -53,7 +53,7 @@ export function MovieMarkButtons({ movieId, marks, onToggle, size = 'sm' }: Movi
           className={marks[key] ? '' : 'bg-background'}
         >
           {icon}
-          {size === 'lg' && <span>{label}</span>}
+          {size === 'lg' && <span className="hidden sm:inline">{label}</span>}
         </Button>
       ))}
     </div>

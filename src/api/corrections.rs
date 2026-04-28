@@ -20,6 +20,7 @@ pub fn routes() -> Router<AppState> {
         .route("/dirs/{dir_id}/candidates", get(get_candidates))
         .route("/dirs/{dir_id}/bind", post(bind_dir))
         .route("/dirs/{dir_id}/unbind", post(unbind_dir))
+        .route("/dirs/{dir_id}/refetch", post(refetch_dir))
         .route("/tmdb/search", get(tmdb_search))
 }
 
@@ -112,7 +113,7 @@ async fn bind_dir(
         .await
         .map_err(internal_error)?;
 
-    let tmdb_client = tmdb_client(&state);
+    let tmdb_client = tmdb_client(&state).await;
 
     let movie_id = if let Some(movie) = existing {
         movie.id
@@ -205,6 +206,72 @@ async fn unbind_dir(
     }))
 }
 
+#[derive(Debug, Serialize)]
+struct RefetchResponse {
+    dir_id: i64,
+    message: String,
+}
+
+/// 单个 dir 的"重新匹配"：删除现有 failed/pending mapping、把 dir scan_status
+/// 退回 'parsed'、重排队 tmdb_search。已 'auto'/'manual' 的 dir 拒绝（要求先 unbind）。
+async fn refetch_dir(
+    _user: RequireUser,
+    State(state): State<AppState>,
+    Path(dir_id): Path<i64>,
+) -> Result<Json<RefetchResponse>, (StatusCode, String)> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT md.dir_name, COALESCE(dmm.match_status, '')
+         FROM media_dirs md
+         LEFT JOIN dir_movie_mappings dmm ON dmm.dir_id = md.id
+         WHERE md.id = ? AND md.scan_status != 'deleted'
+         LIMIT 1",
+    )
+    .bind(dir_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(internal_error)?;
+
+    let (dir_name, current_status) = match row {
+        Some(r) => r,
+        None => return Err((StatusCode::NOT_FOUND, "dir not found".to_string())),
+    };
+
+    if matches!(current_status.as_str(), "auto" | "manual") {
+        return Err((
+            StatusCode::CONFLICT,
+            "dir is already bound; unbind first".to_string(),
+        ));
+    }
+
+    sqlx::query(
+        "DELETE FROM dir_movie_mappings WHERE dir_id = ? AND match_status IN ('failed', 'pending')",
+    )
+    .bind(dir_id)
+    .execute(&state.pool)
+    .await
+    .map_err(internal_error)?;
+
+    db::update_dir_status(&state.pool, dir_id, "parsed")
+        .await
+        .map_err(internal_error)?;
+
+    let parsed = crate::scanner::parser::parse_directory_name(&dir_name);
+    let payload = serde_json::json!({
+        "dir_id": dir_id,
+        "title": parsed.title,
+        "alt_title": parsed.alt_title,
+        "year": parsed.year,
+    });
+    db::insert_task(&state.pool, "tmdb_search", &payload.to_string())
+        .await
+        .map_err(internal_error)?;
+
+    Ok(Json(RefetchResponse {
+        dir_id,
+        message: "tmdb_search re-queued".to_string(),
+    }))
+}
+
 async fn tmdb_search(
     _user: RequireUser,
     State(state): State<AppState>,
@@ -214,7 +281,7 @@ async fn tmdb_search(
         return Err((StatusCode::BAD_REQUEST, "missing query".to_string()));
     }
 
-    let tmdb = tmdb_client(&state);
+    let tmdb = tmdb_client(&state).await;
     let results = tmdb
         .search_movie(&params.q, params.year)
         .await
@@ -223,8 +290,9 @@ async fn tmdb_search(
     Ok(Json(SearchResponse { results }))
 }
 
-fn tmdb_client(state: &AppState) -> TmdbClient {
-    TmdbClient::new(&state.config.tmdb.api_key, &state.config.tmdb.language, state.config.tmdb.proxy.as_deref())
+async fn tmdb_client(state: &AppState) -> TmdbClient {
+    let config = state.config.read().await;
+    TmdbClient::new(&config.tmdb.api_key, &config.tmdb.language, config.tmdb.proxy.as_deref())
 }
 
 fn map_sqlx_error(err: sqlx::Error) -> (StatusCode, String) {
@@ -395,6 +463,78 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(fetch_count, 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn refetch_dir_resets_pending_and_queues_search(pool: SqlitePool) {
+        let token = register(&pool).await;
+        let (dir_id, _) = seed_pending_dir(&pool, "/Inception 2010", "[]").await;
+
+        let (status, body) = post_json(
+            test_app(pool.clone()),
+            &format!("/api/dirs/{}/refetch", dir_id),
+            &json!({}),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["dir_id"], dir_id);
+
+        // mapping deleted, scan_status back to parsed
+        let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dir_movie_mappings WHERE dir_id = ?")
+            .bind(dir_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cnt, 0);
+        let scan_status: String =
+            sqlx::query_scalar("SELECT scan_status FROM media_dirs WHERE id = ?")
+                .bind(dir_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(scan_status, "parsed");
+
+        // tmdb_search task queued
+        let task_cnt: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tasks WHERE task_type = 'tmdb_search' AND status = 'pending'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(task_cnt, 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn refetch_dir_rejects_already_bound(pool: SqlitePool) {
+        let token = register(&pool).await;
+        let dir_id = crate::db::insert_media_dir(&pool, "/Inception", "Inception").await.unwrap();
+        crate::db::update_dir_status(&pool, dir_id, "matched").await.unwrap();
+        crate::db::insert_mapping(&pool, dir_id, None, "manual", Some(0.99), None)
+            .await
+            .unwrap();
+
+        let (status, _) = post_json(
+            test_app(pool),
+            &format!("/api/dirs/{}/refetch", dir_id),
+            &json!({}),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn refetch_dir_404_for_unknown(pool: SqlitePool) {
+        let token = register(&pool).await;
+        let (status, _) = post_json(
+            test_app(pool),
+            "/api/dirs/9999/refetch",
+            &json!({}),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[sqlx::test(migrations = "./migrations")]

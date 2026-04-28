@@ -34,7 +34,7 @@ export function CandidateList({ candidates, onSelect, emptyText = '暂无候选'
             : t('candidate_unrated')
 
         return (
-          <Card key={candidate.id} className="flex items-center gap-3 p-3" role="listitem">
+          <Card key={candidate.id} className="flex items-start gap-3 overflow-hidden p-3" role="listitem">
             {posterUrl ? (
               <img
                 src={posterUrl}
@@ -42,18 +42,18 @@ export function CandidateList({ candidates, onSelect, emptyText = '暂无候选'
                 width={46}
                 height={69}
                 loading="lazy"
-                className="h-[69px] w-[46px] rounded-md object-cover"
+                className="h-[69px] w-[46px] shrink-0 rounded-md object-cover"
               />
             ) : (
               <div
-                className="flex h-[69px] w-[46px] items-center justify-center rounded-md bg-muted text-[11px] text-muted-foreground"
+                className="flex h-[69px] w-[46px] shrink-0 items-center justify-center rounded-md bg-muted text-[11px] text-muted-foreground"
                 aria-label={t('candidate_no_poster')}
               >
                 {t('card_no_poster')}
               </div>
             )}
-            <div className="flex-1 space-y-1">
-              <div className="text-sm font-semibold leading-tight" title={candidate.title}>
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="truncate text-sm font-semibold leading-tight" title={candidate.title}>
                 {candidate.title}
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -62,10 +62,15 @@ export function CandidateList({ candidates, onSelect, emptyText = '暂无候选'
                 <span>{score}</span>
               </div>
               {candidate.original_title && candidate.original_title !== candidate.title && (
-                <div className="text-xs text-muted-foreground">{candidate.original_title}</div>
+                <div className="truncate text-xs text-muted-foreground">{candidate.original_title}</div>
+              )}
+              {candidate.overview && (
+                <div className="line-clamp-2 text-xs leading-relaxed text-muted-foreground/80">
+                  {candidate.overview}
+                </div>
               )}
             </div>
-            <Button type="button" size="sm" onClick={() => onSelect(candidate.id)}>
+            <Button type="button" size="sm" className="shrink-0" onClick={() => onSelect(candidate.id)}>
               {t('candidate_select')}
             </Button>
           </Card>

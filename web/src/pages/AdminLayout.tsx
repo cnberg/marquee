@@ -5,6 +5,11 @@ import AdminOverview from './AdminOverview'
 import AdminPending from './AdminPending'
 import AdminErrors from './AdminErrors'
 import AdminPrompts from './AdminPrompts'
+import AdminBenchmark from './AdminBenchmark'
+import AdminBenchmarkDetail from './AdminBenchmarkDetail'
+import AdminConfig from './AdminConfig'
+import AdminImportDouban from './AdminImportDouban'
+import AdminMultiVersion from './AdminMultiVersion'
 import { Card } from '../components/ui/card'
 import { cn } from '../lib/utils'
 
@@ -16,7 +21,7 @@ export default function AdminLayout() {
 
   return (
     <div className="flex flex-col gap-6 lg:flex-row">
-      <Card className="w-full max-w-xs self-start border bg-card/80 p-4 backdrop-blur">
+      <Card className="w-full max-w-[180px] self-start border bg-card/80 p-3 backdrop-blur">
         <div className="space-y-4">
           <h2 className="text-xl font-semibold">{t('admin_title')}</h2>
           <nav className="space-y-2">
@@ -24,6 +29,10 @@ export default function AdminLayout() {
             <AdminNavLink to="/admin/pending" label={t('admin_nav_pending')} />
             <AdminNavLink to="/admin/errors" label={t('admin_nav_errors')} />
             <AdminNavLink to="/admin/prompts" label={t('admin_nav_prompts')} />
+            <AdminNavLink to="/admin/benchmark" label={t('admin_nav_benchmark')} />
+            <AdminNavLink to="/admin/config" label={t('admin_nav_config')} />
+            <AdminNavLink to="/admin/import-douban" label={t('admin_nav_import_douban')} />
+            <AdminNavLink to="/admin/multi-version" label={t('admin_nav_multiver')} />
           </nav>
         </div>
       </Card>
@@ -33,6 +42,11 @@ export default function AdminLayout() {
           <Route path="pending" element={<AdminPending />} />
           <Route path="errors" element={<AdminErrors />} />
           <Route path="prompts" element={<AdminPrompts />} />
+          <Route path="benchmark" element={<AdminBenchmark />} />
+          <Route path="benchmark/queries/:id" element={<AdminBenchmarkDetail />} />
+          <Route path="config" element={<AdminConfig />} />
+          <Route path="import-douban" element={<AdminImportDouban />} />
+          <Route path="multi-version" element={<AdminMultiVersion />} />
         </Routes>
       </div>
     </div>
@@ -46,8 +60,8 @@ function AdminNavLink({ to, label, end }: { to: string; label: string; end?: boo
       end={end}
       className={({ isActive }) =>
         cn(
-          'flex items-center rounded-md px-3 py-2 text-sm font-medium transition hover:bg-accent hover:text-accent-foreground',
-          isActive ? 'bg-accent text-accent-foreground shadow-sm' : 'text-muted-foreground',
+          'flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition hover:bg-secondary/20 hover:text-foreground',
+          isActive ? 'bg-secondary text-secondary-foreground shadow-sm' : 'text-muted-foreground',
         )
       }
     >

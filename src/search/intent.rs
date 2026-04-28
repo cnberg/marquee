@@ -112,6 +112,126 @@ fn default_query_type() -> String {
     "semantic".to_string()
 }
 
+// ========================================================================
+// Constraint saturation — replaces LLM-supplied sort_rules at ranking time.
+//
+// The LLM at understand-stage hedges: it usually emits sort_rules
+// `rating 0.5 / relevance 0.5` and packs search_intents with concrete
+// imagined sub-themes. When the user's query already lands a *specific*
+// hard constraint (one TMDB keyword like "based on novel or book" locks
+// candidates to ≈1.4% of the library), feeding the LLM's subjective
+// sub-themes as a 50%-weight relevance dimension turns ranking into a
+// "is this candidate near the LLM's imagined sub-theme" filter — and
+// pushes objectively-on-target films out of top 50.
+//
+// The fix is structural: take the sort_rules decision back from the LLM
+// and let the system pick weights based on how saturated the hard
+// constraints are. When constraints are strong, drop relevance entirely
+// and rank by rating + bonuses.
+//
+// Evidence case: backlog "推荐管线 baseline 框架的实证评测", share token
+// `TZySV4da0_F9` ("世界名著改编的同名电影") — 乱世佳人 / 基督山伯爵
+// 进了 structured pool 200 但被 ranking 截到 50 外。
+// ========================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstraintSaturation {
+    /// 0 hard constraint — pure descriptive / vibes query.
+    None,
+    /// 1 wide dim (genre / decade / year_range / language / country / rating /
+    /// runtime / budget_tier) — soft-shaped attribute query.
+    Weak,
+    /// 2–3 wide dims — narrowed attribute query.
+    Medium,
+    /// Any keyword / cast / director constraint (each pin-points <2% of the
+    /// library on its own), or 4+ wide dims combined.
+    Strong,
+}
+
+impl Constraints {
+    pub fn saturation(&self) -> ConstraintSaturation {
+        // Specific signals: a single TMDB keyword / cast / director already
+        // narrows the candidate pool to ~1% — treat as strong regardless of
+        // count.
+        if !self.keywords.is_empty() || !self.cast.is_empty() || !self.directors.is_empty() {
+            return ConstraintSaturation::Strong;
+        }
+        let wide = [
+            !self.genres.is_empty(),
+            !self.countries.is_empty(),
+            !self.languages.is_empty(),
+            !self.decades.is_empty(),
+            self.year_range.min.is_some() || self.year_range.max.is_some(),
+            self.min_rating.is_some() || self.max_rating.is_some(),
+            self.runtime_range.min.is_some() || self.runtime_range.max.is_some(),
+            self.budget_tier.is_some(),
+        ];
+        match wide.iter().filter(|x| **x).count() {
+            0 => ConstraintSaturation::None,
+            1 => ConstraintSaturation::Weak,
+            2..=3 => ConstraintSaturation::Medium,
+            _ => ConstraintSaturation::Strong,
+        }
+    }
+}
+
+/// Compute the sort_rules ranking should use, ignoring whatever the LLM
+/// supplied at understand-stage. Strong saturation drops the relevance
+/// dimension to 0.0 — hard constraints already guarantee on-target, so
+/// the relevance dimension contributes only LLM sub-theme bias.
+pub fn system_sort_rules(sat: ConstraintSaturation) -> Vec<SortRule> {
+    let (rating_w, relevance_w) = match sat {
+        ConstraintSaturation::None => (0.3, 0.7),
+        ConstraintSaturation::Weak => (0.5, 0.5),
+        ConstraintSaturation::Medium => (0.7, 0.3),
+        ConstraintSaturation::Strong => (1.0, 0.0),
+    };
+    let mut rules = vec![SortRule {
+        field: "rating".to_string(),
+        weight: rating_w,
+        order: "desc".to_string(),
+    }];
+    if relevance_w > 0.0 {
+        rules.push(SortRule {
+            field: "relevance".to_string(),
+            weight: relevance_w,
+            order: "desc".to_string(),
+        });
+    }
+    rules
+}
+
+/// Top-K to fetch per `search_intent` from the embedding store. Lowered
+/// for high-saturation queries because the LLM-imagined sub-theme is more
+/// likely to inject bias than to add signal once hard constraints already
+/// sliced the candidate pool down.
+pub fn semantic_recall_per_intent(sat: ConstraintSaturation) -> usize {
+    match sat {
+        ConstraintSaturation::None => 100,
+        ConstraintSaturation::Weak => 80,
+        ConstraintSaturation::Medium => 50,
+        ConstraintSaturation::Strong => 30,
+    }
+}
+
+/// Pool size for `structured_recall`. Shrinks aggressively when there's no
+/// hard constraint, because the SQL filter degenerates to "library
+/// Bayesian-top N"——pure noise relative to a descriptive query. Past 30 it
+/// just floods the merged pool with off-topic high-rated classics that beat
+/// real semantic matches via baseline + rating alone.
+///
+/// Evidence: share `YGWuFuCjCFkX`「跟摩托车相关的电影」——constraints 全空时
+/// 200 候选全是雨中曲/教父/星球大战这种 IMDb-Top；摩托日记 / 阿基拉 / 世上最快
+/// 的印第安摩托一部都没浮上来。
+pub fn structured_recall_limit(sat: ConstraintSaturation) -> i64 {
+    match sat {
+        ConstraintSaturation::None => 30,
+        ConstraintSaturation::Weak => 100,
+        ConstraintSaturation::Medium => 200,
+        ConstraintSaturation::Strong => 200,
+    }
+}
+
 fn default_watched_policy() -> String {
     "neutral".to_string()
 }
@@ -316,6 +436,139 @@ pub fn validate_intent(intent: &mut QueryIntent, original_query: &str, available
         && c.popularity_tier.is_none();
     if all_empty {
         intent.query_type = "semantic".to_string();
+    }
+}
+
+#[cfg(test)]
+mod saturation_tests {
+    use super::*;
+
+    fn cs() -> Constraints {
+        Constraints::default()
+    }
+
+    #[test]
+    fn no_constraints_is_none() {
+        assert_eq!(cs().saturation(), ConstraintSaturation::None);
+    }
+
+    #[test]
+    fn one_keyword_alone_is_strong() {
+        // One TMDB keyword like "based on novel or book" already locks the
+        // candidate pool to ~1.4% of the library — treat as strong even with
+        // no other dims set. This is precisely the share TZySV4da0_F9 case
+        // where 乱世佳人/基督山伯爵 got pushed out of top 50.
+        let mut c = cs();
+        c.keywords = vec!["based on novel or book".into()];
+        assert_eq!(c.saturation(), ConstraintSaturation::Strong);
+    }
+
+    #[test]
+    fn one_cast_alone_is_strong() {
+        let mut c = cs();
+        c.cast = vec!["周星驰".into()];
+        assert_eq!(c.saturation(), ConstraintSaturation::Strong);
+    }
+
+    #[test]
+    fn one_director_alone_is_strong() {
+        let mut c = cs();
+        c.directors = vec!["黑泽明".into()];
+        assert_eq!(c.saturation(), ConstraintSaturation::Strong);
+    }
+
+    #[test]
+    fn one_wide_dim_is_weak() {
+        let mut c = cs();
+        c.genres = vec!["科幻".into()];
+        assert_eq!(c.saturation(), ConstraintSaturation::Weak);
+    }
+
+    #[test]
+    fn three_wide_dims_is_medium() {
+        let mut c = cs();
+        c.genres = vec!["科幻".into()];
+        c.decades = vec![1990];
+        c.languages = vec!["en".into()];
+        assert_eq!(c.saturation(), ConstraintSaturation::Medium);
+    }
+
+    #[test]
+    fn four_wide_dims_promotes_to_strong() {
+        let mut c = cs();
+        c.genres = vec!["科幻".into()];
+        c.decades = vec![1990];
+        c.languages = vec!["en".into()];
+        c.countries = vec!["US".into()];
+        assert_eq!(c.saturation(), ConstraintSaturation::Strong);
+    }
+
+    #[test]
+    fn strong_drops_relevance_dim_completely() {
+        // The structural decision: when hard constraints are strong, the
+        // relevance dimension is 100% sub-theme bias from the LLM, so we drop
+        // it. Ranking falls back to rating + bonuses.
+        let rules = system_sort_rules(ConstraintSaturation::Strong);
+        assert_eq!(rules.len(), 1, "strong saturation should emit only rating rule");
+        assert_eq!(rules[0].field, "rating");
+        assert!((rules[0].weight - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn none_favors_relevance_over_rating() {
+        let rules = system_sort_rules(ConstraintSaturation::None);
+        let rel = rules.iter().find(|r| r.field == "relevance").expect("relevance rule");
+        let rat = rules.iter().find(|r| r.field == "rating").expect("rating rule");
+        assert!(rel.weight > rat.weight, "no-saturation queries should weight relevance more");
+    }
+
+    #[test]
+    fn weights_always_sum_to_one() {
+        for sat in [
+            ConstraintSaturation::None,
+            ConstraintSaturation::Weak,
+            ConstraintSaturation::Medium,
+            ConstraintSaturation::Strong,
+        ] {
+            let rules = system_sort_rules(sat);
+            let sum: f64 = rules.iter().map(|r| r.weight).sum();
+            assert!((sum - 1.0).abs() < 1e-9, "weights for {:?} sum to {}, expected 1.0", sat, sum);
+        }
+    }
+
+    #[test]
+    fn semantic_recall_decreases_with_saturation() {
+        let n = semantic_recall_per_intent(ConstraintSaturation::None);
+        let w = semantic_recall_per_intent(ConstraintSaturation::Weak);
+        let m = semantic_recall_per_intent(ConstraintSaturation::Medium);
+        let s = semantic_recall_per_intent(ConstraintSaturation::Strong);
+        // Monotonic: more hard constraint → less semantic recall budget.
+        assert!(n > w, "None({}) should give more semantic recall than Weak({})", n, w);
+        assert!(w > m);
+        assert!(m > s);
+        // Strong should still be > 0 — keep some semantic candidates as a
+        // tiebreaker pool for the ranking dim, even if it's down-weighted.
+        assert!(s > 0);
+    }
+
+    #[test]
+    fn structured_recall_limit_shrinks_when_unconstrained() {
+        // saturation=None means SQL filter is empty → query degenerates to
+        // "library Bayesian-top N", which is pure noise relative to a
+        // descriptive query. Limit must drop sharply so semantic recall isn't
+        // drowned by off-topic high-rated classics. Evidence: share
+        // YGWuFuCjCFkX (motorcycle) — at limit 200 the top 50 was all
+        // 雨中曲/教父/星球大战 with zero motorcycle films surfacing.
+        let n = structured_recall_limit(ConstraintSaturation::None);
+        let w = structured_recall_limit(ConstraintSaturation::Weak);
+        let m = structured_recall_limit(ConstraintSaturation::Medium);
+        let s = structured_recall_limit(ConstraintSaturation::Strong);
+        assert!(n < w, "None({}) should pull a smaller pool than Weak({})", n, w);
+        assert!(w <= m);
+        assert!(m <= s);
+        // Keep a non-zero floor — without it we lose fallback when semantic
+        // recall yields nothing.
+        assert!(n >= 10, "None floor too small ({}) — fallback at risk", n);
     }
 }
 
